@@ -1,0 +1,210 @@
+---
+title: "Revised Four Factors"
+author: "Jonathan Bosch & Dax Speakman"
+date: "October 16, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(hrbrthemes)
+library(corrplot)
+library(foreign)
+library(systemfit)
+library(gridExtra)
+library(restriktor)
+```
+
+
+## Read Data
+
+```{r}
+setwd("~/Cuse/Projects/FourFactors")
+factors <- read_csv("factors_9.csv")
+factors %>% select(c(1,7,8,11,12,14,16,17,18,19,20,21,22,23,26,27,28,29,30,31,32,33,34,36)) -> factors
+```
+
+
+## Salary Disribution (do we eliminate outliers?, do we scale salaries with salary caps?)
+
+```{r}
+salary <- factors$average
+
+quantile(salary, c(.025,.975))
+
+factors %>% filter(average <= 27111953 & average >= 980431) -> filter_factors
+
+filter_factors$log_salary <- log(filter_factors$average)
+
+
+filter_factors %>% ggplot( aes(x=average)) + 
+  geom_density(fill = "mediumpurple", colour = "mediumpurple3", alpha = 0.6) + 
+  scale_x_continuous(name = "Salary", breaks = seq(0,30000000,5000000),limits = c(0,30000000)) + 
+  scale_y_continuous(name = "Density") + ggtitle("Salary Distribution") +
+  theme_bw()
+
+filter_factors %>% ggplot( aes(x=log_salary)) + 
+  geom_density(fill = "mediumpurple", colour = "mediumpurple3", alpha = 0.6) + 
+  scale_x_continuous(name = "Log(Salary)", limits = c(12,18)) + 
+  scale_y_continuous(name = "Density") + ggtitle("Log(Salary) Distribution") +
+  theme_bw()
+
+
+```
+
+
+## 9 Factors DENSITY CURVES
+
+```{r}
+
+filter_factors %>% ggplot( aes(x=efg)) + geom_density(fill="firebrick1", color="firebrick1",
+                                                    alpha=0.8) + ggtitle("eFG%") -> p1
+
+filter_factors %>% ggplot( aes(x=oreb)) + geom_density(fill="firebrick1", color="firebrick1",
+                                                    alpha=0.8) + ggtitle("OReb%") -> p2
+
+filter_factors %>% ggplot( aes(x=tov)) + geom_density(fill="firebrick1", color="firebrick1",
+                                                    alpha=0.8) + ggtitle("TOV%")  -> p3
+
+filter_factors %>% ggplot( aes(x=ftr)) + geom_density(fill="firebrick1", color="firebrick1",
+                                                    alpha=0.8) + ggtitle("FTr") -> p4
+
+filter_factors %>% ggplot( aes(x=opp_efg)) + geom_density(fill="firebrick1", color="firebrick1",
+                                                    alpha=0.8) + ggtitle("Opponent eFG%") -> p5
+
+filter_factors %>% ggplot( aes(x=dreb)) + geom_density(fill="firebrick1", color="firebrick1",
+                                                    alpha=0.8) + ggtitle("DReb%") -> p6
+
+filter_factors %>% ggplot( aes(x=opp_tov)) + geom_density(fill="firebrick1", color="firebrick1",
+                                                    alpha=0.8) + ggtitle("Opponent TOV%") -> p7
+
+filter_factors %>% ggplot( aes(x=opp_ftr)) + geom_density(fill="firebrick1", color="firebrick1",
+                                                    alpha=0.8) + ggtitle("Opponent FTr") -> p8
+
+filter_factors %>% ggplot( aes(x=ast_perc)) + geom_density(fill="firebrick1", color="firebrick1",
+                                                    alpha=0.8) + ggtitle("Ast %") -> p9
+
+grid.arrange(p1,p2,p3,p4,p5,p6,p7,p8,p9, nrow = 3, ncol = 3) -> pp
+```
+
+
+## RPM and Position EDA
+
+```{r}
+filter_factors %>% ggplot( aes(x=rpm)) + 
+  geom_density(fill = "cadetblue1", colour = "cadetblue", alpha = 0.6) + 
+  scale_x_continuous(name = "RPM", breaks = seq(-10,10,2), limits = c(-10,10)) + 
+  scale_y_continuous(name = "Density") + ggtitle("RPM Distribution") +
+  theme_bw()
+
+pg <- sum(filter_factors$pg)
+sg <- sum(filter_factors$sg)
+sf <- sum(filter_factors$sf)
+pf <- sum(filter_factors$pf)
+ct <- sum(filter_factors$c)
+
+filter_factors %>% group_by(position) %>% summarize(average_salary = mean(average)) -> position_salary
+
+position_salary %>% ggplot( aes(x=position, y=average_salary/1000000)) +
+  geom_bar(colour="gray48", fill="darkolivegreen3", width=0.5, stat="identity") +
+  xlab("Position") +
+  scale_y_continuous(name="Average Salary (in Millions)") +
+  ggtitle("Salary by Position")
+
+
+position_counts <- data.frame("Position" = c("PG","SG","SF","PF","C"), "Count" = c(pg,sg,sf,pf,ct))
+
+position_counts %>% ggplot( aes(x=Position, y=Count)) +
+  geom_bar(colour="gray48", fill="khaki1", width=0.5, stat="identity") +
+  xlab("Position") +
+  scale_y_continuous(name="Count") +
+  ggtitle("Position Counts")
+```
+
+
+
+## Corr Plot
+
+```{r}
+factors_corr <- filter_factors %>% select(c(10,11,12,13,14,15,21,22,23,24,25))
+
+corrplot(cor(factors_corr))
+```
+
+
+## New Vars
+
+```{r}
+filter_factors <- filter_factors %>% mutate(
+  shooting = efg - opp_efg,
+  rebounding = oreb + dreb,
+  turnovers = opp_tov - tov,
+  freethrows = ftr - opp_ftr
+)
+```
+
+
+
+
+## Systemfit Regression
+
+```{r}
+rpm1.lm <- lm(rpm~ efg + oreb + tov + ftr + opp_efg + dreb + opp_tov + opp_ftr + ast_perc,
+              data = filter_factors)
+
+rpm2.lm <- lm(rpm~ shooting + rebounding + turnovers + freethrows + ast_perc, data = filter_factors)
+
+test <- anova(rpm1.lm,rpm2.lm)
+
+summary(rpm1.lm)
+summary(rpm2.lm)
+
+r1 <- log_salary~ rpm + age + factor(position) + factor(to)
+r2 <- rpm~ efg + oreb + tov + ftr + opp_efg + dreb + opp_tov + opp_ftr + ast_perc
+r3 <- rpm~ shooting + rebounding + turnovers + freethrows + ast_perc
+
+fitsur1 <- systemfit(list(rpmreg = r2, salaryreg = r1), data=filter_factors)
+fitsur2 <- systemfit(list(rpmreg = r3, salaryreg = r1), data=filter_factors)
+
+summary(fitsur1)
+summary(fitsur2)
+
+```
+
+
+## Stand Alone Regression
+
+```{r}
+
+salary.lm1 <- lm(log_salary ~ efg + oreb + tov + ftr + opp_efg + dreb + opp_tov + opp_ftr + ast_perc +
+                  age + factor(position) + factor(to), data = filter_factors)
+
+summary(salary.lm1)
+```
+
+
+
+
+## Incorporate Interactive Terms
+
+```{r}
+#r2 <- log_salary~ rpm + age + factor(position) + factor(to)
+#r1 <- rpm~ efg + oreb + tov + ftr + opp_efg + dreb + opp_tov + opp_ftr + ast_perc +
+#  efg*pg + oreb*pg + tov*pg + ftr*pg + opp_efg*pg + dreb*pg + opp_tov*pg + opp_ftr*pg + ast_perc*pg +
+#  efg*sg + oreb*sg + tov*sg + ftr*sg + opp_efg*sg + dreb*sg + opp_tov*sg + opp_ftr*sg + ast_perc*sg +
+#  efg*sf + oreb*sf + tov*sf + ftr*sf + opp_efg*sf + dreb*sf + opp_tov*sf + opp_ftr*sf + ast_perc*sf +
+#  efg*pf + oreb*pf + tov*pf + ftr*pf + opp_efg*pf + dreb*pf + opp_tov*pf + opp_ftr*pf + ast_perc*pf
+
+#fitsur4 <- systemfit(list(rpmreg = r1, salaryreg = r2), data=filter_factors)
+
+
+salary.lm2 <- lm(log_salary ~ efg + oreb + tov + ftr + opp_efg + dreb + opp_tov + opp_ftr + ast_perc +
+                  efg*pg + oreb*pg + tov*pg + ftr*pg + opp_efg*pg + dreb*pg + opp_tov*pg + opp_ftr*pg + ast_perc*pg + efg*sg + oreb*sg + tov*sg + ftr*sg + opp_efg*sg + dreb*sg + opp_tov*sg + opp_ftr*sg + ast_perc*sg + efg*sf + oreb*sf + tov*sf + ftr*sf + opp_efg*sf + dreb*sf + opp_tov*sf + opp_ftr*sf + ast_perc*sf + efg*pf + oreb*pf + tov*pf + ftr*pf + opp_efg*pf + dreb*pf + opp_tov*pf + opp_ftr*pf + ast_perc*pf + age + factor(to), data = filter_factors)
+
+summary(salary.lm2)
+```
+
+
+
+
